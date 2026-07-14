@@ -1,0 +1,43 @@
+.timer { padding-top: 40px; padding-bottom: 8px; text-align: center; }
+.face { display: block; width: 100%; text-align: center; }
+.kicker {
+  font-family: var(--font-serif);
+  font-size: 11px;
+  letter-spacing: 0.4em;
+  padding-left: 0.4em;
+  text-transform: uppercase;
+  color: var(--seb-ink-dark-muted);
+  margin-bottom: 6px;
+}
+.value {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 92px;
+  line-height: 0.95;
+  font-feature-settings: 'tnum';
+  color: #f3ead9;
+  text-shadow: 0 1px 24px rgba(201, 155, 83, 0.16);
+}
+.track {
+  height: 2px;
+  background: rgba(239, 230, 214, 0.1);
+  border-radius: 2px;
+  margin: 22px auto 0;
+  max-width: 220px;
+  overflow: hidden;
+}
+.fill { height: 100%; background: var(--seb-gold-bright); border-radius: 2px; transition: width 0.3s linear; }
+.startedAt {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--seb-ink-dark-muted);
+}
+.clock { font-family: var(--font-serif); font-size: 14px; letter-spacing: 0.06em; color: rgba(239, 230, 214, 0.72); }
+.hint {
+  font-family: var(--font-serif);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(239, 230, 214, 0.34);
+  margin-top: 12px;
+}

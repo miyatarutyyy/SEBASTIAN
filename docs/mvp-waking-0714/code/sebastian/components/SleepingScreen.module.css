@@ -1,0 +1,11 @@
+.root { color: var(--seb-ink-dark); }
+.center { text-align: center; }
+.title { font-family: var(--font-mincho); font-weight: 500; font-size: 30px; letter-spacing: 0.14em; }
+.steward {
+  font-family: var(--font-serif);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  padding-left: 0.22em;
+  color: rgba(236, 226, 209, 0.34);
+  margin-top: 18px;
+}
