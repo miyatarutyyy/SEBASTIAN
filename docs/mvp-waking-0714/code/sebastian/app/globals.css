@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;700&family=Cormorant+Garamond:wght@400;500;600&display=swap');
+
+:root {
+  --seb-gold: #b68235;
+  --seb-gold-bright: #c99b53;
+  --seb-gold-deep: #9a6f1f;
+  --seb-bg-sleeping: #1a150e;
+  --seb-bg-waking: #1d1811;
+  --seb-bg-awake: #f3f2f2;
+  --seb-ink-dark: #ece2d1;
+  --seb-ink-dark-muted: rgba(236, 226, 209, 0.5);
+  --seb-ink-light: #201f1d;
+  --seb-ink-light-muted: rgba(32, 31, 29, 0.55);
+  --font-mincho: 'Shippori Mincho', serif;
+  --font-serif: 'Cormorant Garamond', serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-mincho);
+  background: #0e0b07;
+  -webkit-font-smoothing: antialiased;
+}
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+button:focus-visible { outline: 2px solid var(--seb-gold); outline-offset: 2px; }
