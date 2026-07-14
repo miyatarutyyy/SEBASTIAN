@@ -1,0 +1,11 @@
+{
+  "name": "sebastian",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @sebastian/web dev",
+    "build": "pnpm --filter @sebastian/web build",
+    "lint": "pnpm --filter @sebastian/web lint",
+    "start": "pnpm --filter @sebastian/web start",
+    "check": "pnpm lint && pnpm build"
+  }
+}
