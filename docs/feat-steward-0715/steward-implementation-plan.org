@@ -33,6 +33,7 @@ waking --起床完了--> awake
 - =LifeState= の管理
 - Steward の状態遷移
 - 起床シーケンスの開始と完了
+- =@js-temporal/polyfill= による Temporal API の利用
 - localStorage への保存と復元
 - 不正な保存データの破棄
 - =sleeping= / =waking= / =awake= ごとの画面切り替え
@@ -71,7 +72,13 @@ export type StewardState = {
 };
 #+END_SRC
 
-日時は ISO 8601 文字列で保存する。
+日時は =Temporal.Instant= として扱い、保存時は ISO 8601 文字列にする。
+
+Native =Temporal= は実行環境によって利用可否が分かれるため、実装では =@js-temporal/polyfill= から import して使う。
+
+#+BEGIN_SRC typescript
+import { Temporal } from "@js-temporal/polyfill";
+#+END_SRC
 
 初期状態は次の通り。
 
@@ -103,7 +110,7 @@ sebastian:steward:state
 - =lifeState= が想定外
 - =waking= なのに =wakeStartedAt= がない
 - =wakeCompletedAt= が開始時刻より前
-- 日時文字列が ISO 8601 として解釈できない
+- 日時文字列が =Temporal.Instant= として解釈できない
 
 不正データを検出した場合は、初期状態へ戻す。
 
@@ -127,16 +134,16 @@ Steward が持たない責務:
 
 * 7. 関数設計
 
-=lib/steward.ts= には純粋関数を置く。
+=features/steward/steward.ts= には純粋関数を置く。
 
 実装する関数:
 
 #+BEGIN_SRC typescript
-resetToSleeping(state: StewardState): StewardState
-startWaking(state: StewardState, now: Date): StewardState
-completeWaking(state: StewardState, now: Date): StewardState
+resetToSleeping(): StewardState
+startWaking(state: StewardState, now: Temporal.Instant): StewardState
+completeWaking(state: StewardState, now: Temporal.Instant): StewardState
 validateStewardState(value: unknown): StewardState | null
-getWakeDurationSeconds(state: StewardState, now: Date): number | null
+getWakeDurationSeconds(state: StewardState, now: Temporal.Instant): number | null
 #+END_SRC
 
 状態遷移のルール:
@@ -162,7 +169,7 @@ getWakeDurationSeconds(state: StewardState, now: Date): number | null
 
 * 8. React hook
 
-=lib/useSteward.ts= に React hook を実装する。
+=features/steward/useSteward.ts= に React hook を実装する。
 
 責務:
 
@@ -206,7 +213,7 @@ export const WAKE_TARGET_SECONDS = 30 * 60;
 #+END_SRC
 
 タイマーは保存しない。
-表示時点の現在時刻と =wakeStartedAt= の差分から計算する。
+表示時点の =Temporal.Instant= と =wakeStartedAt= の差分から計算する。
 
 * 10. 画面構成
 
@@ -264,12 +271,12 @@ apps/web/
     AwakeContent.tsx
     AwakeContent.module.css
   features/
+    steward/
+      steward.ts
+      stewardStorage.ts
+      useSteward.ts
     waking/
       wakingContent.ts
-  lib/
-    steward.ts
-    stewardStorage.ts
-    useSteward.ts
 #+END_SRC
 
 * 12. テスト方針
@@ -288,9 +295,9 @@ apps/web/
 
 * 13. 実装順序
 
-1. =lib/steward.ts= を作る
-2. =lib/stewardStorage.ts= を作る
-3. =lib/useSteward.ts= を作る
+1. =features/steward/steward.ts= を作る
+2. =features/steward/stewardStorage.ts= を作る
+3. =features/steward/useSteward.ts= を作る
 4. =features/waking/wakingContent.ts= を作る
 5. 状態別コンポーネントを作る
 6. =app/page.tsx= で状態別に表示を切り替える
@@ -345,13 +352,16 @@ docs/feat-steward-0715/steward-implementation-plan.org
 対象ファイル:
 
 #+BEGIN_SRC text
-apps/web/lib/steward.ts
+apps/web/package.json
+apps/web/features/steward/steward.ts
+pnpm-lock.yaml
 #+END_SRC
 
 実装内容:
 
 - =LifeState= の定義
 - =StewardState= の定義
+- =@js-temporal/polyfill= の追加
 - 初期状態の定義
 - 保存キーの定義
 - =resetToSleeping=
@@ -377,7 +387,7 @@ apps/web/lib/steward.ts
 対象ファイル:
 
 #+BEGIN_SRC text
-apps/web/lib/stewardStorage.ts
+apps/web/features/steward/stewardStorage.ts
 #+END_SRC
 
 実装内容:
@@ -406,7 +416,7 @@ apps/web/lib/stewardStorage.ts
 対象ファイル:
 
 #+BEGIN_SRC text
-apps/web/lib/useSteward.ts
+apps/web/features/steward/useSteward.ts
 #+END_SRC
 
 実装内容:
