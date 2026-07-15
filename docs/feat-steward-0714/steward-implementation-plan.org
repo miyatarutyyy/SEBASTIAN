@@ -1,0 +1,352 @@
+#+TITLE: Steward 実装方針
+
+* 1. 目的
+
+Steward を SEBASTIAN の中核オーケストレーターとして実装し、生活状態に応じたコンテンツ切り替えと生活イベントシーケンスの起動・終了を管理できるようにする。
+
+今回の最優先ゴールは、ユーザーが =sleeping= から =waking= を経て =awake= へ明示的に遷移できること、生活状態に応じて表示コンテンツが切り替わること、かつページ再読み込み後も Steward が現在の生活状態と実行中シーケンスを復元できることである。
+
+* 2. 前提
+
+- 既存仕様は =docs/mvp-waking-0714/sebastian-mvp-spec.org= を正とする
+- 既存プロトタイプは =docs/mvp-waking-0714/code/sebastian= にある
+- 本実装先は =apps/web= とする
+- MVP ではサーバー保存、ログイン、通知、自動判定、睡眠シーケンス、支度シーケンスは実装しない
+- MVP で実行対象にする生活イベントシーケンスは起床シーケンスのみとする
+- Steward は起床シーケンスの内部手順、タイマー表示、評価結果の詳細を持たない
+- Steward は表示コンテンツそのものを描画しない。どの生活状態にどのコンテンツを出すかの判断材料を提供する
+- 今回は =sleeping=、=waking=、=awake= それぞれにダミーでよいので表示コンテンツを用意する
+- Sequence registry や汎用 host / adapter はまだ作らない。生活状態が 3 つだけの間は単純な分岐で接続する
+
+* 3. 実装スコープ
+
+** 3.1 Steward 状態管理
+
+Steward は生活状態と実行中シーケンスの管理に関心を持つ。
+
+実装する生活状態:
+
+#+BEGIN_SRC typescript
+type LifeState = "sleeping" | "waking" | "awake";
+#+END_SRC
+
+実装するシーケンス種別:
+
+#+BEGIN_SRC typescript
+type SequenceKind = "waking";
+#+END_SRC
+
+保存する状態:
+
+#+BEGIN_SRC typescript
+type StewardState = {
+  lifeState: LifeState;
+  activeSequence: {
+    kind: SequenceKind;
+    startedAt: string;
+  } | null;
+  completedSequences: Array<{
+    kind: SequenceKind;
+    startedAt: string;
+    completedAt: string;
+  }>;
+};
+#+END_SRC
+
+保存キー:
+
+#+BEGIN_SRC text
+sebastian:steward:state
+#+END_SRC
+
+初期状態:
+
+#+BEGIN_SRC json
+{
+  "lifeState": "awake",
+  "activeSequence": null,
+  "completedSequences": []
+}
+#+END_SRC
+
+** 3.2 Steward が扱う操作
+
+Steward は生活イベントの orchestration として次の操作だけを扱う。
+各シーケンスの内部処理、表示、タイマー、結果評価、表示コンテンツの美的判断は Steward の責務ではない。
+
+- =睡眠状態にする=
+  - 開発用操作
+  - どの状態からでも =sleeping= へ遷移する
+  - 実行中シーケンスと完了済みシーケンス履歴をクリアする
+
+- =目覚めた=
+  - =sleeping= のときだけ実行できる
+  - =waking= へ遷移する
+  - =activeSequence= に =kind: "waking"= と開始時刻を保存する
+  - 起床コンテンツへ切り替え可能な状態にする
+
+- =起床完了=
+  - =waking= のときだけ実行できる
+  - =awake= へ遷移する
+  - 実行中の =waking= シーケンスを終了する
+  - 完了履歴に開始時刻と完了時刻を保存する
+  - =activeSequence= を =null= に戻す
+
+** 3.3 コンテンツ切り替え
+
+Steward は UI を描画しない。
+ただし、現在の生活状態と実行中シーケンスをもとに、アプリケーションがどのコンテンツへ切り替えるべきかを判断できる状態を提供する。
+
+MVP で用意する表示コンテンツ:
+
+- =sleeping= 用コンテンツ
+  - ダミーでよい
+  - =目覚めた= 操作を呼び出せる
+  - Steward から見ると「起床シーケンス開始前の待機状態」
+
+- =waking= 用コンテンツ
+  - 今回の本題である起床シーケンス用コンテンツ
+  - =起床完了= 操作を呼び出せる
+  - 起床シーケンス固有の表示や内部ロジックはここに閉じる
+
+- =awake= 用コンテンツ
+  - ダミーでよい
+  - 開発用に =睡眠状態にする= 操作を呼び出せる
+  - Steward から見ると「実行中シーケンスがない通常状態」
+
+切り替えは =app/page.tsx= で単純に行う。
+この段階では汎用的な sequence registry、host、adapter を作らない。
+
+#+BEGIN_SRC typescript
+if (steward.lifeState === "sleeping") {
+  return <SleepingContent onWake={steward.startWaking} />;
+}
+
+if (steward.lifeState === "waking") {
+  return <WakingContent onComplete={steward.completeWaking} />;
+}
+
+return <AwakeContent onSleep={steward.resetToSleeping} />;
+#+END_SRC
+
+** 3.4 起床シーケンスとの境界
+
+起床シーケンスは今回唯一の実行対象だが、Steward はその内部詳細を知らない。
+
+Steward から見た起床シーケンス:
+
+- =sleeping= から =waking= へ遷移したときに開始される生活イベント
+- ユーザー操作または将来の外部条件によって完了通知を受ける対象
+- 完了すると =awake= へ遷移し、次の生活イベントを起動できる状態を作る対象
+
+Steward が扱わないもの:
+
+- 起床目標時間
+- 起床タイマーの残り時間・経過時間
+- 起床シーケンス画面内の表示モード
+- 起床手順の詳細
+- 起床結果の評価文言
+
+これらは =waking= シーケンス側、またはその UI 側で扱う。
+
+* 4. アーキテクチャ
+
+** 4.1 ファイル構成
+
+=apps/web= に次を追加・更新する。
+
+#+BEGIN_SRC text
+apps/web/
+  app/
+    page.tsx
+    page.module.css
+    globals.css
+  components/
+    SleepingContent.tsx
+    WakingContent.tsx
+    AwakeContent.tsx
+    *.module.css
+  lib/
+    steward.ts
+    stewardStorage.ts
+    useSteward.ts
+  features/
+    waking/
+      wakingContent.ts
+#+END_SRC
+
+** 4.2 責務分離
+
+- =lib/steward.ts=
+  - 型定義
+  - 定数
+  - 状態遷移関数
+  - 生活状態とシーケンス実行状態の整合性検証
+  - シーケンス開始・終了の純粋関数
+  - 不正状態の検証
+
+- =lib/stewardStorage.ts=
+  - =localStorage= の読み書き
+  - JSON parse 失敗時の破棄
+  - 保存形式のバリデーション
+  - 将来 DB 保存へ置き換えやすくする境界
+
+- =lib/useSteward.ts=
+  - React hook
+  - 操作関数の公開
+  - 保存状態の復元と永続化
+  - 表示コンテンツを直接描画しない
+
+- =app/page.tsx=
+  - =useSteward= から生活状態と操作関数を受け取る
+  - =sleeping= / =waking= / =awake= に応じて表示コンテンツを選ぶ
+  - 今回は単純な条件分岐でよく、汎用ルーティング機構は作らない
+
+- =features/waking/wakingContent.ts=
+  - 起床シーケンス固有の派生値
+  - 起床シーケンス固有の表示用ロジック
+  - Steward から渡された開始時刻・完了時刻の解釈
+
+- =components/*=
+  - 状態別の表示コンテンツ
+  - 生活状態そのものの変更ロジックは持たない
+  - 操作は =useSteward= 由来の command を呼び出すだけにする
+
+* 5. プロトタイプから本実装へ移す時の修正点
+
+既存プロトタイプをそのままコピーしない。以下を修正してから =apps/web= に入れる。
+
+- 保存キーを =sebastian_v1= から =sebastian:steward:state= に変更する
+- 初期状態を =sleeping= から =awake= に変更する
+- 保存形式を epoch ms 中心から ISO 8601 文字列へ変更する
+- =elapsedMs= を保存しない
+- =result= を保存しない
+- 起床固有の経過時間や結果計算は Steward ではなく起床シーケンス側へ移す
+- =speed= は本番ロジックに入れない。必要なら開発専用 UI として明示的に分離する
+- =waking= なのに =activeSequence= がない、=activeSequence.kind= が =waking= ではない、完了時刻が開始時刻より前などの不正状態を初期状態へ戻す
+- プロトタイプ UI を Steward の UI として移植しない。生活状態ごとの表示コンテンツとして分離する
+
+* 6. 実装順序
+
+** Phase 1: Steward ドメインを作る
+
+1. =LifeState=、=SequenceKind=、=StewardState= を定義する
+2. 初期状態と保存キーを定義する
+3. =resetToSleeping=、=startSequence=、=completeActiveSequence= の純粋関数を作る
+4. =sleeping=、=waking=、=awake= と =activeSequence= の整合性検証を作る
+5. 起床固有の計算を Steward ドメインに入れないことを確認する
+
+完了条件:
+
+- 状態遷移が仕様どおりに表現できる
+- UI なしで生活状態の遷移とシーケンス開始・終了がテスト可能
+- Steward が起床タイマーや起床手順の詳細に依存していない
+- Steward が React component や表示コンテンツに依存していない
+
+** Phase 2: 保存境界を作る
+
+1. =stewardStorage.ts= を作る
+2. 保存データの parse / validate / normalize を実装する
+3. 不正データは初期状態へ戻す
+4. SSR 中は =localStorage= に触らない
+
+完了条件:
+
+- 保存済み状態がない場合 =awake= になる
+- 壊れた JSON や不正状態が UI を壊さない
+- =waking= のまま再読み込みしても実行中シーケンスが復元される
+
+** Phase 3: Hook を作る
+
+1. =useSteward= を作る
+2. 初回マウント後に保存状態を復元する
+3. 状態変更時に保存する
+4. 操作関数を返す
+5. 現在の生活状態と実行中シーケンス情報を返す
+6. 表示コンテンツ選択は hook 内に持たせない
+
+完了条件:
+
+- 操作は実行条件を満たす時だけ状態を変える
+- 起床シーケンスの内部時間経過に関係なく =waking= のまま維持できる
+- =起床完了= で =awake= へ遷移し、実行中シーケンスが終了する
+- hook が UI component を import しない
+
+** Phase 4: 状態別コンテンツとルーティングを作る
+
+1. =apps/web/app/page.tsx= で =useSteward= を呼び出す
+2. =lifeState= に応じて =SleepingContent=、=WakingContent=、=AwakeContent= を切り替える
+3. 各コンテンツはダミーでよいが、状態遷移を確認できる操作を持たせる
+4. =sleeping= コンテンツには =目覚めた= 操作を置く
+5. =waking= コンテンツには =起床完了= 操作を置く
+6. =awake= コンテンツには開発用の =睡眠状態にする= 操作を置く
+7. 起床シーケンス固有の表示は =WakingContent= と =features/waking/wakingContent.ts= に閉じ込める
+
+完了条件:
+
+- 初回表示は =awake=
+- =睡眠状態にする= で =sleeping=
+- =目覚めた= で =waking=
+- =起床完了= で =awake=
+- 各生活状態で別のコンテンツが表示される
+- Steward 自体は UI component を持たない
+- 起床シーケンスの開始・終了時刻を UI で確認できる
+
+** Phase 5: 検証
+
+1. TypeScript / lint を通す
+2. Next.js build を通す
+3. ブラウザで主要フローを確認する
+4. localStorage を壊した状態でも復旧することを確認する
+5. 再読み込み後の =waking= と =activeSequence= 復元を確認する
+
+完了条件:
+
+- =pnpm --filter @sebastian/web lint= が成功する
+- =pnpm --filter @sebastian/web build= が成功する
+- 受け入れ条件を手動確認できる
+
+* 7. 受け入れ条件
+
+- 保存済み状態がない初回表示で =awake= が表示される
+- =睡眠状態にする= を押すと =sleeping= が表示される
+- =sleeping= で =目覚めた= を押すと =waking= になる
+- =sleeping=、=waking=、=awake= でそれぞれ異なるコンテンツが表示される
+- =waking= では =activeSequence.kind= が =waking= として復元される
+- 起床シーケンス内部の UI が Steward 状態遷移に影響せず表示できる
+- =waking= で =起床完了= を押すと =awake= になる
+- =awake= で直近の起床シーケンス開始時刻と完了時刻が確認できる
+- ページ再読み込み後も保存済み状態から復元される
+- 不正な localStorage 値は破棄され、初期状態 =awake= へ戻る
+
+* 8. 実装上の判断
+
+- Steward の本質は「画面」ではなく「生活状態と生活イベントシーケンスのオーケストレーター」として実装する
+- Steward は OS 的な層として、時系列、実行中シーケンス、完了済みシーケンス、次に起動できる生活イベントの条件を管理する
+- 表示コンテンツの選択は必要だが、Steward 自身が UI を描画するわけではない
+- MVP では =app/page.tsx= の単純分岐で生活状態ごとのコンテンツへルーティングする
+- sequence registry、host、adapter といった抽象化は 2 つ目以降のシーケンスが必要になってから導入する
+- 起床シーケンスは今回唯一の sequence 実装だが、Steward が起床固有のタイマーや手順を直接知る設計にしない
+- 起床タイマーの経過時間、残り時間、表示モードは Steward の永続化対象にしない
+- 起床結果の詳細評価は Steward では保存しない。必要な場合は完了履歴の開始時刻・完了時刻から起床シーケンス側で派生させる
+- 開発用操作は MVP 検証のため残すが、通常シーケンスとは明確に分ける
+
+* 9. リスク
+
+- localStorage だけでは端末間同期できない
+- 開発用の =睡眠状態にする= が本番体験に混ざる可能性がある
+- 通知がないため、朝にアプリを開く動機は別途検証が必要
+- 起床完了はユーザー判断のため、押し忘れが起こりうる
+- 起床シーケンスが 1 つだけの段階では、Steward と sequence の責務境界が曖昧になりやすい
+- 分離を急ぎすぎると sequence registry などの不要な抽象化が増え、MVP の実装が冗長になる
+
+これらは MVP の対象外として扱い、最初の実装では Steward の状態遷移が毎朝使えるかの検証を優先する。
+
+* 10. 次の作業
+
+1. Phase 1 から =apps/web/lib/steward.ts= を実装する
+2. 続けて =stewardStorage.ts= と =useSteward.ts= を実装する
+3. =SleepingContent=、=WakingContent=、=AwakeContent= をダミー込みで作る
+4. =app/page.tsx= で生活状態ごとのコンテンツ切り替えを実装する
+5. 起床固有ロジックを =features/waking/wakingContent.ts= に分離する
+6. lint / build / 手動フロー確認で完了判定する
