@@ -1,0 +1,579 @@
+#+TITLE: Steward 実装方針
+#+DATE: 2026-07-15
+
+* 1. 目的
+
+SEBASTIAN の中核となる Steward を実装する。
+
+今回の目的は、ユーザーの生活状態を Steward が管理し、状態に応じて画面コンテンツを切り替えられるようにすることである。
+
+最初の実装対象は、MVP 仕様で定義されている起床シーケンスである。
+
+ユーザーは次の流れで生活状態を遷移できる。
+
+#+BEGIN_SRC text
+awake --睡眠状態にする--> sleeping
+sleeping --目覚めた--> waking
+waking --起床完了--> awake
+#+END_SRC
+
+* 2. 正とする仕様
+
+実装では次の仕様を正とする。
+
+- =docs/mvp-waking-0714/sebastian-mvp-spec.org=
+- 実装先は =apps/web=
+- =docs/mvp-waking-0714/code/sebastian= は参考実装として扱う
+- プロトタイプをそのままコピーしない
+
+* 3. 実装スコープ
+
+今回実装するもの:
+
+- =LifeState= の管理
+- Steward の状態遷移
+- 起床シーケンスの開始と完了
+- =@js-temporal/polyfill= による Temporal API の利用
+- localStorage への保存と復元
+- 不正な保存データの破棄
+- =sleeping= / =waking= / =awake= ごとの画面切り替え
+- 起床タイマー表示
+- 起床完了結果の表示
+- 開発用の =睡眠状態にする= 操作
+
+今回実装しないもの:
+
+- ログイン
+- サーバー保存
+- データベース保存
+- 通知
+- 自動起床完了判定
+- 睡眠シーケンス
+- 支度シーケンス
+- 汎用的な sequence registry
+- AI 提案
+- 複数日履歴の本格管理
+
+* 4. 状態モデル
+
+MVP で扱う生活状態は次の 3 種類とする。
+
+#+BEGIN_SRC typescript
+export type LifeState = "sleeping" | "waking" | "awake";
+#+END_SRC
+
+Steward の保存状態は次の形式にする。
+
+#+BEGIN_SRC typescript
+export type StewardState = {
+  lifeState: LifeState;
+  wakeStartedAt: string | null;
+  wakeCompletedAt: string | null;
+};
+#+END_SRC
+
+日時は =Temporal.Instant= として扱い、保存時は ISO 8601 文字列にする。
+
+Native =Temporal= は実行環境によって利用可否が分かれるため、実装では =@js-temporal/polyfill= から import して使う。
+
+#+BEGIN_SRC typescript
+import { Temporal } from "@js-temporal/polyfill";
+#+END_SRC
+
+初期状態は次の通り。
+
+#+BEGIN_SRC typescript
+export const INITIAL_STEWARD_STATE: StewardState = {
+  lifeState: "awake",
+  wakeStartedAt: null,
+  wakeCompletedAt: null,
+};
+#+END_SRC
+
+* 5. 保存方針
+
+保存先は MVP の暫定対応として =localStorage= を使う。
+
+保存キー:
+
+#+BEGIN_SRC text
+sebastian:steward:state
+#+END_SRC
+
+保存処理は UI や hook に直接埋め込まず、=stewardStorage.ts= に分離する。
+
+不正データは復元しない。
+
+不正データの例:
+
+- JSON として parse できない
+- =lifeState= が想定外
+- =waking= なのに =wakeStartedAt= がない
+- =wakeCompletedAt= が開始時刻より前
+- 日時文字列が =Temporal.Instant= として解釈できない
+
+不正データを検出した場合は、初期状態へ戻す。
+
+* 6. Steward の責務
+
+Steward が持つ責務:
+
+- 現在の生活状態を保持する
+- 状態遷移を制御する
+- 起床シーケンスの開始時刻と完了時刻を記録する
+- 保存可能な状態を提供する
+- UI がどの状態コンテンツを表示すべきか判断できる情報を提供する
+
+Steward が持たない責務:
+
+- 画面の見た目
+- 起床タイマーの表示モード
+- 起床結果の文言
+- 起床シーケンス内の細かい UI 表示
+- 将来の生活イベントの registry 管理
+
+* 7. 関数設計
+
+=features/steward/steward.ts= には純粋関数を置く。
+
+実装する関数:
+
+#+BEGIN_SRC typescript
+resetToSleeping(): StewardState
+startWaking(state: StewardState, now: Temporal.Instant): StewardState
+completeWaking(state: StewardState, now: Temporal.Instant): StewardState
+validateStewardState(value: unknown): StewardState | null
+getWakeDurationSeconds(state: StewardState, now: Temporal.Instant): number | null
+#+END_SRC
+
+状態遷移のルール:
+
+- =resetToSleeping=
+  - どの状態からでも実行できる
+  - =lifeState= を =sleeping= にする
+  - =wakeStartedAt= と =wakeCompletedAt= を =null= にする
+
+- =startWaking=
+  - =sleeping= の場合のみ実行する
+  - =lifeState= を =waking= にする
+  - =wakeStartedAt= に現在時刻を入れる
+  - =wakeCompletedAt= を =null= にする
+
+- =completeWaking=
+  - =waking= の場合のみ実行する
+  - =lifeState= を =awake= にする
+  - =wakeCompletedAt= に現在時刻を入れる
+  - =wakeStartedAt= は保持する
+
+実行条件を満たさない場合は、状態を変更しない。
+
+* 8. React hook
+
+=features/steward/useSteward.ts= に React hook を実装する。
+
+責務:
+
+- 初回マウント後に localStorage から復元する
+- 状態変更後に localStorage へ保存する
+- UI から呼び出す command を提供する
+- SSR 中に =window= や =localStorage= へ触らない
+
+返す値の例:
+
+#+BEGIN_SRC typescript
+{
+  state,
+  lifeState,
+  wakeStartedAt,
+  wakeCompletedAt,
+  resetToSleeping,
+  startWaking,
+  completeWaking,
+}
+#+END_SRC
+
+* 9. 起床シーケンス表示
+
+起床タイマーの表示ロジックは Steward 本体から分離する。
+
+=features/waking/wakingContent.ts= に起床シーケンス固有の派生値を置く。
+
+扱う値:
+
+- 起床目標時間 30 分
+- 経過秒数
+- 残り秒数
+- =MM:SS= 表示
+- 残り時間が 0 になったかどうか
+
+起床目標時間:
+
+#+BEGIN_SRC typescript
+export const WAKE_TARGET_SECONDS = 30 * 60;
+#+END_SRC
+
+タイマーは保存しない。
+表示時点の =Temporal.Instant= と =wakeStartedAt= の差分から計算する。
+
+* 10. 画面構成
+
+=app/page.tsx= は client component とし、=useSteward= を使って状態別コンテンツを切り替える。
+
+用意するコンポーネント:
+
+#+BEGIN_SRC text
+components/
+  SleepingContent.tsx
+  WakingContent.tsx
+  AwakeContent.tsx
+#+END_SRC
+
+画面切り替え:
+
+#+BEGIN_SRC typescript
+if (steward.lifeState === "sleeping") {
+  return <SleepingContent onWake={steward.startWaking} />;
+}
+
+if (steward.lifeState === "waking") {
+  return (
+    <WakingContent
+      wakeStartedAt={steward.wakeStartedAt}
+      onComplete={steward.completeWaking}
+    />
+  );
+}
+
+return (
+  <AwakeContent
+    wakeStartedAt={steward.wakeStartedAt}
+    wakeCompletedAt={steward.wakeCompletedAt}
+    onSleep={steward.resetToSleeping}
+  />
+);
+#+END_SRC
+
+* 11. ファイル構成
+
+今回追加・更新するファイル:
+
+#+BEGIN_SRC text
+apps/web/
+  app/
+    page.tsx
+    page.module.css
+    globals.css
+  components/
+    SleepingContent.tsx
+    SleepingContent.module.css
+    WakingContent.tsx
+    WakingContent.module.css
+    AwakeContent.tsx
+    AwakeContent.module.css
+  features/
+    steward/
+      steward.ts
+      stewardStorage.ts
+      useSteward.ts
+    waking/
+      wakingContent.ts
+#+END_SRC
+
+* 12. テスト方針
+
+最低限、純粋関数はテストしやすい形で実装する。
+
+今回の段階では、まず =pnpm lint= と =pnpm build= を通すことを完了条件にする。
+
+追加テストを入れる場合は、優先して確認する対象は次の通り。
+
+- 初期状態が =awake= になる
+- =sleeping= から =waking= に遷移できる
+- =waking= から =awake= に遷移できる
+- 不正な保存データが初期状態へ戻る
+- =waking= 中の経過時間が =wakeStartedAt= から復元される
+
+* 13. 実装順序
+
+1. =features/steward/steward.ts= を作る
+2. =features/steward/stewardStorage.ts= を作る
+3. =features/steward/useSteward.ts= を作る
+4. =features/waking/wakingContent.ts= を作る
+5. 状態別コンポーネントを作る
+6. =app/page.tsx= で状態別に表示を切り替える
+7. CSS を整える
+8. =pnpm lint= を実行する
+9. =pnpm build= を実行する
+
+* 14. 完了条件
+
+- 初回表示時に =awake= として表示される
+- 開発用操作で =sleeping= にできる
+- =sleeping= から =目覚めた= で =waking= に遷移できる
+- =waking= 中に起床タイマーが表示される
+- ページ再読み込み後も =waking= が復元される
+- =起床完了= で =awake= に遷移できる
+- 起床完了結果が表示される
+- localStorage の保存キーが =sebastian:steward:state= である
+- =pnpm lint= が成功する
+- =pnpm build= が成功する
+
+* 15. チケット計画
+
+作業は小さなチケットに分ける。
+各チケット名は、そのまま Git commit message として使える英文の Conventional Commit とする。
+
+** Ticket 1: =docs: add steward implementation plan=
+
+目的:
+
+- Steward 実装の方針をドキュメント化する
+- 実装スコープ、責務分離、保存方針、作業順序を明確にする
+
+対象ファイル:
+
+#+BEGIN_SRC text
+docs/feat-steward-0715/steward-implementation-plan.org
+#+END_SRC
+
+完了条件:
+
+- Steward の実装方針が文書化されている
+- 実装対象と非対象が明確になっている
+- 後続チケットが定義されている
+
+** Ticket 2: =feat: add steward domain model=
+
+目的:
+
+- Steward の中核となる型と状態遷移を実装する
+- React や localStorage に依存しない純粋なドメインロジックを作る
+
+対象ファイル:
+
+#+BEGIN_SRC text
+apps/web/package.json
+apps/web/features/steward/steward.ts
+pnpm-lock.yaml
+#+END_SRC
+
+実装内容:
+
+- =LifeState= の定義
+- =StewardState= の定義
+- =@js-temporal/polyfill= の追加
+- 初期状態の定義
+- 保存キーの定義
+- =resetToSleeping=
+- =startWaking=
+- =completeWaking=
+- =validateStewardState=
+- 起床時間計算用の補助関数
+
+完了条件:
+
+- =sleeping= / =waking= / =awake= の状態を表現できる
+- 仕様どおりの状態遷移ができる
+- 不正な状態を検出できる
+- 起床タイマー固有の表示ロジックを Steward に入れていない
+
+** Ticket 3: =feat: add steward local storage adapter=
+
+目的:
+
+- Steward 状態の保存と復元を localStorage に分離する
+- 将来 DB 保存へ置き換えやすい境界を作る
+
+対象ファイル:
+
+#+BEGIN_SRC text
+apps/web/features/steward/stewardStorage.ts
+#+END_SRC
+
+実装内容:
+
+- =loadStewardState=
+- =saveStewardState=
+- =clearStewardState=
+- SSR 中に =window= へ触らないガード
+- JSON parse 失敗時の初期化
+- 不正データ検出時の初期化
+
+完了条件:
+
+- 保存キーが =sebastian:steward:state= である
+- 保存済み状態がない場合は初期状態になる
+- 壊れた JSON で UI が壊れない
+- 不正な保存データは復元されない
+
+** Ticket 4: =feat: add steward react hook=
+
+目的:
+
+- UI から Steward を利用するための React hook を実装する
+- 状態復元、状態更新、永続化を hook に閉じ込める
+
+対象ファイル:
+
+#+BEGIN_SRC text
+apps/web/features/steward/useSteward.ts
+#+END_SRC
+
+実装内容:
+
+- 初回マウント後の状態復元
+- 状態変更後の保存
+- =resetToSleeping= command
+- =startWaking= command
+- =completeWaking= command
+- UI 向けの現在状態公開
+
+完了条件:
+
+- UI が hook 経由で Steward を操作できる
+- SSR 中に localStorage へ触らない
+- ページ再読み込み後に状態が復元される
+- hook が画面コンポーネントを直接描画しない
+
+** Ticket 5: =feat: add waking sequence view model=
+
+目的:
+
+- 起床シーケンス固有の表示ロジックを Steward から分離する
+- 起床タイマーの派生値を計算できるようにする
+
+対象ファイル:
+
+#+BEGIN_SRC text
+apps/web/features/waking/wakingContent.ts
+#+END_SRC
+
+実装内容:
+
+- =WAKE_TARGET_SECONDS= の定義
+- 経過秒数の計算
+- 残り秒数の計算
+- =MM:SS= フォーマット
+- 目標時間超過判定
+- 起床完了結果の表示用計算
+
+完了条件:
+
+- 経過時間は =wakeStartedAt= と現在時刻の差分から計算される
+- 残り時間は 0 未満にならない
+- タイマー値そのものを保存しない
+- Steward ドメインが起床タイマー表示に依存しない
+
+** Ticket 6: =feat: add steward state screens=
+
+目的:
+
+- =sleeping= / =waking= / =awake= の状態別コンテンツを実装する
+- MVP として操作可能な 1 画面を作る
+
+対象ファイル:
+
+#+BEGIN_SRC text
+apps/web/components/SleepingContent.tsx
+apps/web/components/SleepingContent.module.css
+apps/web/components/WakingContent.tsx
+apps/web/components/WakingContent.module.css
+apps/web/components/AwakeContent.tsx
+apps/web/components/AwakeContent.module.css
+#+END_SRC
+
+実装内容:
+
+- =sleeping= 画面
+- =waking= 画面
+- =awake= 画面
+- =目覚めた= 操作
+- =起床完了= 操作
+- =睡眠状態にする= 開発用操作
+- 起床タイマー表示
+- 起床完了結果表示
+
+完了条件:
+
+- 各状態に応じたコンテンツが表示される
+- 各操作が適切な command を呼び出す
+- 状態変更ロジックをコンポーネント内に持たない
+- モバイル幅でも主要テキストとボタンが破綻しない
+
+** Ticket 7: =feat: wire steward into home page=
+
+目的:
+
+- =app/page.tsx= に Steward を接続する
+- 状態に応じた画面切り替えを有効にする
+
+対象ファイル:
+
+#+BEGIN_SRC text
+apps/web/app/page.tsx
+apps/web/app/page.module.css
+apps/web/app/globals.css
+#+END_SRC
+
+実装内容:
+
+- =useSteward= の利用
+- =lifeState= による条件分岐
+- 状態別コンポーネントへの props 接続
+- ページ全体の基本レイアウト調整
+
+完了条件:
+
+- 初回表示時は =awake= 画面になる
+- =睡眠状態にする= で =sleeping= へ遷移する
+- =目覚めた= で =waking= へ遷移する
+- =起床完了= で =awake= へ遷移する
+- 再読み込み後も =waking= が復元される
+
+** Ticket 8: =test: verify steward implementation=
+
+目的:
+
+- 実装後の最低限の品質確認を行う
+- lint と build を通して、Next.js アプリとして成立していることを確認する
+
+対象コマンド:
+
+#+BEGIN_SRC sh
+pnpm lint
+pnpm build
+#+END_SRC
+
+確認内容:
+
+- TypeScript エラーがない
+- ESLint エラーがない
+- production build が成功する
+- 起床シーケンスの主要操作を手動確認する
+
+完了条件:
+
+- =pnpm lint= が成功する
+- =pnpm build= が成功する
+- 手動確認で主要な状態遷移が動作する
+
+** Ticket 9: =refactor: tighten steward implementation boundaries=
+
+目的:
+
+- 実装後に責務の混入がないか見直す
+- MVP の範囲を超えた抽象化やプロトタイプ由来の不要要素を除く
+
+確認内容:
+
+- Steward に起床タイマー表示ロジックが混ざっていない
+- UI コンポーネントに状態遷移ロジックが混ざっていない
+- localStorage 処理が hook や UI に散らばっていない
+- =speed= などプロトタイプ由来の開発用ロジックが入っていない
+- 汎用 sequence registry を先走って作っていない
+
+完了条件:
+
+- 責務分離が実装方針に沿っている
+- 不要な抽象化がない
+- MVP 範囲外の機能が入っていない
