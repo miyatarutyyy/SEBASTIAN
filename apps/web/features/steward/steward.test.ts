@@ -84,6 +84,14 @@ test("completeWaking does not change awake state", () => {
   expect(completeWaking(state, now)).toBe(state);
 });
 
+test("completeWaking does not complete when completed time is before started time", () => {
+  const startedAt = Temporal.Instant.from("2026-07-17T00:05:00Z");
+  const completedAt = Temporal.Instant.from("2026-07-17T00:00:00Z");
+  const state = startWaking(resetToSleeping(), startedAt);
+
+  expect(completeWaking(state, completedAt)).toBe(state);
+});
+
 test("validateStewardState accepts valid sleeping state", () => {
   expect(validateStewardState(resetToSleeping())).toEqual({
     lifeState: "sleeping",

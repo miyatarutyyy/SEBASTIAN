@@ -96,6 +96,13 @@ export function completeWaking(
     return state;
   }
 
+  const started = parseInstant(state.wakeStartedAt);
+
+  if (started === null || Temporal.Instant.compare(now, started) <0) {
+    // そのままにすれば良い
+    return state;
+  }
+  
   return {
     lifeState: "awake",
     wakeStartedAt: state.wakeStartedAt,
