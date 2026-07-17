@@ -95,6 +95,12 @@ function subscribe(listener: () => void): () => void {
     notifyListeners();
   }
 
+  if (typeof window === "undefined") {
+    return () => {
+      listeners.delete(listener);
+    };
+  }
+
   window.addEventListener("storage", handleStorage);
 
   return () => {

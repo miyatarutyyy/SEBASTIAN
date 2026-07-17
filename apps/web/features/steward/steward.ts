@@ -98,7 +98,7 @@ export function completeWaking(
 
   const started = parseInstant(state.wakeStartedAt);
 
-  if (started === null || Temporal.Instant.compare(now, started) <0) {
+  if (started === null || Temporal.Instant.compare(now, started) < 0) {
     // そのままにすれば良い
     return state;
   }
