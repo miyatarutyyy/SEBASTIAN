@@ -21,3 +21,6 @@ pnpm-debug.log*
 
 # Editors and OS
 .DS_Store
+
+# Local agent instructions
+AGENTS.md

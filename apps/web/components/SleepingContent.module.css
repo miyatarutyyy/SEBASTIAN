@@ -1,0 +1,48 @@
+.body {
+  flex: 1;
+  display: grid;
+  align-content: center;
+  gap: 12px;
+  min-height: 260px;
+}
+
+.title {
+  color: #111827;
+  font-size: clamp(34px, 10vw, 56px);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.description {
+  color: #5b6472;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.actions {
+  display: grid;
+  gap: 10px;
+}
+
+.actionLabel {
+  color: #5b6472;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.primaryButton {
+  min-height: 56px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 20px;
+  color: #ffffff;
+  background: #2563eb;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.primaryButton:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.32);
+  outline-offset: 3px;
+}

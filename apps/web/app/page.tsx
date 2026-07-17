@@ -1,13 +1,28 @@
+"use client";
+
+import { AwakeContent } from "../components/AwakeContent";
+import { ScreenShell } from "../components/ScreenShell";
+import { SleepingContent } from "../components/SleepingContent";
+import { WakingContent } from "../components/WakingContent";
+import { useSteward } from "../features/steward/useSteward";
+
 export default function Home() {
+  const steward = useSteward();
+
   return (
-    <main>
-      <section>
-        <p>Next.js App Router</p>
-        <h1>新しい画面をここから作る</h1>
-        <p>
-          `apps/web/app/page.tsx` を編集すると、このページに反映されます。
-        </p>
-      </section>
-    </main>
+    <ScreenShell>
+      {steward.lifeState === "sleeping" ? (
+        <SleepingContent onWake={steward.startWaking} />
+      ) : null}
+      {steward.lifeState === "waking" ? (
+        <WakingContent
+          state={steward.state}
+          onComplete={steward.completeWaking}
+        />
+      ) : null}
+      {steward.lifeState === "awake" ? (
+        <AwakeContent state={steward.state} onSleep={steward.resetToSleeping} />
+      ) : null}
+    </ScreenShell>
   );
 }

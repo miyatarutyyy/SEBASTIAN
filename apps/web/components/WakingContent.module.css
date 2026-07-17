@@ -1,0 +1,93 @@
+.timer {
+  flex: 1;
+  display: grid;
+  align-content: center;
+  gap: 18px;
+  min-height: 330px;
+}
+
+.timerFace {
+  width: 100%;
+  display: grid;
+  gap: 10px;
+  padding: 26px 18px 28px;
+  border: 1px solid #cfd6e2;
+  border-radius: 8px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.timerFace:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.32);
+  outline-offset: 3px;
+}
+
+.timerLabel {
+  color: #5b6472;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.timerValue {
+  color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: clamp(54px, 16vw, 86px);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.meta {
+  display: grid;
+  gap: 8px;
+}
+
+.metaRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #5b6472;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.metaRow dd {
+  color: #111827;
+  font-weight: 700;
+}
+
+.overdue {
+  border-left: 4px solid #dc2626;
+  padding: 10px 12px;
+  color: #7f1d1d;
+  background: #fef2f2;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.actions {
+  display: grid;
+  gap: 10px;
+}
+
+.actionLabel {
+  color: #5b6472;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.primaryButton {
+  min-height: 56px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 20px;
+  color: #ffffff;
+  background: #2563eb;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.primaryButton:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.32);
+  outline-offset: 3px;
+}

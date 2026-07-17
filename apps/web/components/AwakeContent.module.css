@@ -1,0 +1,93 @@
+.greeting {
+  flex: 1;
+  display: grid;
+  align-content: center;
+  min-height: 180px;
+}
+
+.title {
+  color: #111827;
+  font-size: clamp(32px, 9vw, 52px);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.result {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.resultTitle {
+  color: #111827;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.resultRows {
+  display: grid;
+  gap: 10px;
+}
+
+.resultRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #5b6472;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.resultRow dd {
+  color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 800;
+}
+
+.actions {
+  display: grid;
+  gap: 10px;
+}
+
+.actionLabel {
+  color: #5b6472;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.devBlock {
+  display: grid;
+  gap: 8px;
+}
+
+.devTag {
+  width: fit-content;
+  border: 1px solid #c6ccd6;
+  border-radius: 4px;
+  padding: 3px 7px;
+  color: #5b6472;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.secondaryButton {
+  min-height: 50px;
+  border: 1px solid #c6ccd6;
+  border-radius: 8px;
+  padding: 0 18px;
+  color: #111827;
+  background: #ffffff;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.secondaryButton:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.32);
+  outline-offset: 3px;
+}
