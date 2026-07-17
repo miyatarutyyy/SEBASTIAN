@@ -1,0 +1,48 @@
+.header {
+  display: grid;
+  gap: 18px;
+}
+
+.identity {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.appName {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.stewardName {
+  color: #5b6472;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.statusBlock {
+  display: grid;
+  gap: 5px;
+}
+
+.statusLabel {
+  color: #5b6472;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.statusValue {
+  color: #101827;
+  font-size: clamp(40px, 12vw, 72px);
+  font-weight: 800;
+  line-height: 0.95;
+}
+
+.message {
+  color: #2f3a4a;
+  font-size: 15px;
+  line-height: 1.7;
+}
