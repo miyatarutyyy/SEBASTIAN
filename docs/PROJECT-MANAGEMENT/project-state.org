@@ -1,0 +1,539 @@
+#+TITLE: SEBASTIAN Project State
+#+DATE: 2026-07-18
+
+* 目的
+
+このドキュメントは、SEBASTIAN に初めて参加する人が、現在の実装状態を短時間で把握するための入口である。
+
+既存の仕様書や実装計画を置き換えるものではなく、次の情報をつなぐための現在地メモとして扱う。
+
+- プロダクトが何を作ろうとしているか
+- 現在のコードがどこまで実装されているか
+- どのファイルを読めば理解が進むか
+- まだ実装されていないこと、判断が必要なこと
+- 次に開発へ入る前に確認すべきこと
+
+* 参照すべき既存ドキュメント
+
+** 正とする仕様
+
+- =docs/mvp-waking-0714/sebastian-mvp-spec.org=
+  - MVP の状態、イベント、保存データ、画面表示、受け入れ条件を定義している。
+  - 実装判断で迷った場合、まずこの仕様を確認する。
+
+** 企画背景
+
+- =docs/mvp-waking-0714/sebastian-mvp-plan.org=
+  - SEBASTIAN が何を目指すプロダクトかを説明している。
+  - 起床シーケンスがなぜ最初の MVP なのかを理解するために読む。
+
+** Steward 実装方針
+
+- =docs/feat-steward-0715/steward-implementation-plan.org=
+  - 現在の =apps/web= 実装に近い設計方針が書かれている。
+  - Steward の責務、localStorage 保存、React hook、起床タイマー表示の分離方針を確認できる。
+
+** 参考実装
+
+- =docs/mvp-waking-0714/code/sebastian=
+  - 初期 MVP の参考コード。
+  - 現在の実装先ではない。
+  - 現在の実装は =apps/web= にある。
+
+* プロジェクト概要
+
+SEBASTIAN は、ユーザーの日常生活を支援するプロダクトである。
+
+現在の MVP では、生活全体ではなく、最初の生活状態遷移である「起床」に絞っている。
+
+中核概念は =Steward= である。Steward は、ユーザーの生活状態を管理し、状態に応じた生活シーケンスを呼び出す上位オーケストレーターとして位置づけられている。
+
+現在の MVP で扱う生活状態は次の 3 つである。
+
+#+BEGIN_SRC typescript
+type LifeState = "sleeping" | "waking" | "awake";
+#+END_SRC
+
+状態遷移は次の通り。
+
+#+BEGIN_SRC text
+awake --睡眠状態にする--> sleeping
+sleeping --目覚めた--> waking
+waking --起床完了--> awake
+#+END_SRC
+
+=睡眠状態にする= は MVP 検証用の開発操作であり、将来的には睡眠シーケンスに置き換える想定である。
+
+* 技術スタック
+
+現在の実装は pnpm workspace 上の Next.js アプリである。
+
+- ルート package
+  - =package.json=
+  - workspace 全体の script を定義している。
+
+- Web アプリ
+  - =apps/web=
+  - package 名は =@sebastian/web=
+
+- 主な技術
+  - Next.js 16
+  - React 19
+  - TypeScript
+  - Vitest
+  - ESLint
+  - =@js-temporal/polyfill=
+
+主なコマンド:
+
+#+BEGIN_SRC shell
+pnpm dev
+pnpm lint
+pnpm build
+pnpm test
+pnpm test:run
+pnpm check
+#+END_SRC
+
+* 現在のディレクトリ構成
+
+実装の中心は =apps/web= である。
+
+#+BEGIN_SRC text
+apps/web
+├── app
+│   ├── layout.tsx
+│   ├── page.tsx
+│   └── globals.css
+├── components
+│   ├── ScreenShell.tsx
+│   ├── StatusHeader.tsx
+│   ├── SleepingContent.tsx
+│   ├── WakingContent.tsx
+│   └── AwakeContent.tsx
+└── features
+    ├── steward
+    │   ├── steward.ts
+    │   ├── stewardStorage.ts
+    │   ├── useSteward.ts
+    │   ├── steward.test.ts
+    │   └── stewardStorage.test.ts
+    └── waking
+        └── wakingContent.ts
+#+END_SRC
+
+責務はおおむね次のように分かれている。
+
+- =features/steward/steward.ts=
+  - Steward の状態モデル、状態遷移、保存データ検証、起床時間計算。
+  - React や localStorage に直接依存しないドメイン層。
+
+- =features/steward/stewardStorage.ts=
+  - localStorage への保存、復元、削除。
+  - SSR や storage 例外を考慮し、ブラウザ保存を best-effort として扱う。
+
+- =features/steward/useSteward.ts=
+  - React から Steward 状態を使うための hook。
+  - =useSyncExternalStore= で localStorage 由来の状態を外部ストアとして扱う。
+
+- =features/waking/wakingContent.ts=
+  - 起床タイマーや起床結果の表示用派生値。
+  - 30 分固定の起床目標、残り時間、経過時間、表示文字列を扱う。
+
+- =components/*Content.tsx=
+  - lifeState ごとの画面表示。
+  - 状態遷移そのものは持たず、渡された callback を UI 操作から呼ぶ。
+
+- =app/page.tsx=
+  - =useSteward= を呼び、現在の =lifeState= に応じて画面コンテンツを切り替える。
+
+* 現在の実装の要点
+
+** 1. Steward の状態モデル
+
+Steward の保存状態は次の形である。
+
+#+BEGIN_SRC typescript
+type StewardState = {
+  lifeState: LifeState;
+  wakeStartedAt: string | null;
+  wakeCompletedAt: string | null;
+};
+#+END_SRC
+
+日時は ISO 8601 文字列として保存される。
+
+実装では =Date= ではなく =@js-temporal/polyfill= の =Temporal.Instant= を使っている。
+
+理由:
+
+- 時刻の意味を明確にするため
+- 文字列の検証を安全に行うため
+- 経過時間を現在時刻との差分から計算するため
+
+初期状態は =awake= である。
+
+#+BEGIN_SRC typescript
+{
+  lifeState: "awake",
+  wakeStartedAt: null,
+  wakeCompletedAt: null,
+}
+#+END_SRC
+
+初回表示でユーザーをいきなり睡眠中扱いしないため、この初期状態になっている。
+
+** 2. 状態遷移は純粋関数として実装されている
+
+=features/steward/steward.ts= には、状態遷移を行う純粋関数がある。
+
+- =resetToSleeping()=
+  - どの状態からでも =sleeping= に戻す。
+  - 起床開始時刻と起床完了時刻を消す。
+  - MVP 用の開発操作。
+
+- =startWaking(state, now)=
+  - =sleeping= の場合だけ =waking= に遷移する。
+  - =wakeStartedAt= に =now= を保存する。
+  - =sleeping= 以外では同じ state 参照を返す。
+
+- =completeWaking(state, now)=
+  - =waking= かつ =wakeStartedAt= が存在する場合だけ =awake= に遷移する。
+  - =wakeCompletedAt= に =now= を保存する。
+  - 完了時刻が開始時刻より前の場合は遷移しない。
+  - 条件を満たさない場合は同じ state 参照を返す。
+
+無効な操作で同じ state 参照を返す設計により、React 側では「状態が変わらなかった」ことを参照比較で判断できる。
+
+** 3. 保存データは runtime validation してから復元する
+
+localStorage は TypeScript の型安全性の外側にあるため、保存値は =unknown= として扱い、=validateStewardState= で検証している。
+
+検証している主な内容:
+
+- オブジェクトであること
+- =lifeState= が ="sleeping" | "waking" | "awake"= のいずれかであること
+- =wakeStartedAt= と =wakeCompletedAt= が =null= または =Temporal.Instant= として解釈できる文字列であること
+- =sleeping= は開始時刻・完了時刻を持たないこと
+- =waking= は開始時刻を持ち、完了時刻を持たないこと
+- =awake= は時刻なし、または開始時刻と完了時刻の両方を持つこと
+- 完了時刻が開始時刻より前ではないこと
+
+不正な保存値は採用せず、初期状態へ戻す。
+
+** 4. localStorage 境界は stewardStorage.ts に分離されている
+
+=features/steward/stewardStorage.ts= は、保存先が localStorage であることを閉じ込める層である。
+
+保存キー:
+
+#+BEGIN_SRC text
+sebastian:steward:state
+#+END_SRC
+
+実装上の特徴:
+
+- =window= がない環境では初期状態を返す。
+- localStorage 取得や JSON parse が失敗しても UI を壊さない。
+- 不正な保存値を見つけたら、初期状態を localStorage に書き戻す。
+- 保存失敗は握りつぶし、UI の動作を優先する。
+
+これは MVP の暫定保存であり、将来的に DB 保存へ移る場合はこの境界が差し替え候補になる。
+
+** 5. React 側では useSyncExternalStore を使っている
+
+=features/steward/useSteward.ts= は、Steward の状態を React から使う hook である。
+
+この hook は通常の =useState= だけではなく、=useSyncExternalStore= を使っている。
+
+現在の設計:
+
+- モジュール内に =clientSnapshot= を 1 つ持つ。
+- 初回クライアント参照時に localStorage から復元する。
+- サーバー側では localStorage を読まず、固定の server snapshot を返す。
+- 状態更新時はドメイン関数を呼び、変化があった場合だけ保存と通知を行う。
+- =storage= イベントを監視し、別タブで状態が変わった場合にも追従する。
+
+hook が UI に返す主な値:
+
+#+BEGIN_SRC typescript
+{
+  state,
+  lifeState,
+  wakeStartedAt,
+  wakeCompletedAt,
+  isLoaded,
+  resetToSleeping,
+  startWaking,
+  completeWaking,
+}
+#+END_SRC
+
+=isLoaded= は、SSR 初期値と localStorage 復元後の値を区別するために用意されている。ただし、現時点の画面コンポーネントでは積極的には使われていない。
+
+** 6. 起床タイマーは保存せず、時刻差分から計算する
+
+起床タイマーの表示ロジックは =features/waking/wakingContent.ts= にある。
+
+起床目標時間:
+
+#+BEGIN_SRC typescript
+const WAKE_TARGET_SECONDS = 30 * 60;
+#+END_SRC
+
+タイマー値そのものは保存しない。
+
+=wakeStartedAt= と現在時刻から経過秒数を計算し、残り秒数を派生させる。
+
+#+BEGIN_SRC text
+elapsedSeconds = now - wakeStartedAt
+remainingSeconds = max(0, 30min - elapsedSeconds)
+#+END_SRC
+
+この設計により、ブラウザタブが非アクティブになって =setInterval= が遅れても、再表示時に現在時刻との差分から正しい値へ戻る。
+
+** 7. 画面は lifeState ごとにコンポーネントを切り替える
+
+=app/page.tsx= は client component であり、=useSteward= を使って現在の lifeState を読み取る。
+
+表示切り替え:
+
+- =sleeping=
+  - =SleepingContent=
+  - 「就寝中」
+  - =目覚めた= ボタン
+
+- =waking=
+  - =WakingContent=
+  - 起床タイマー
+  - =起床完了= ボタン
+
+- =awake=
+  - =AwakeContent=
+  - 「おはようございます」
+  - 起床結果
+  - 開発用の =睡眠状態にする= ボタン
+
+各画面の共通ヘッダーは =StatusHeader= で、現在の生活状態と Steward からの短いメッセージを表示する。
+
+** 8. WakingContent は 1 秒ごとに表示時刻を更新する
+
+=WakingContent= は内部 state として =now= を持ち、=setInterval= で 1 秒ごとに更新する。
+
+表示モードは次の 2 つ。
+
+- =remaining=
+  - 起床目標までの残り時間
+
+- =elapsed=
+  - 目覚めてからの経過時間
+
+タイマー表示部分をクリックすると、残り時間表示と経過時間表示を切り替える。
+
+30 分を超えた場合は残り時間を =00:00= に固定し、起床完了を促すメッセージを表示する。時間切れ状態そのものは持たない。
+
+** 9. AwakeContent は起床結果を表示する
+
+=AwakeContent= は =getWakeResultContent= を使い、起床開始時刻、起床完了時刻、起床にかかった時間を表示する。
+
+初期状態の =awake= では起床履歴がないため、起床結果は表示されない。
+
+=waking -> awake= の遷移で =wakeStartedAt= と =wakeCompletedAt= がそろった場合だけ、起床結果が表示される。
+
+* 現在実装されていること
+
+- Next.js アプリとしての単一画面
+- Steward の生活状態管理
+- =sleeping= / =waking= / =awake= の状態モデル
+- 起床シーケンス開始
+- 起床シーケンス完了
+- 開発用の =睡眠状態にする= 操作
+- 起床開始時刻と完了時刻の記録
+- 起床経過時間の計算
+- 起床目標 30 分までの残り時間表示
+- 残り時間と経過時間の表示切り替え
+- 起床目標超過時のメッセージ
+- 起床結果表示
+- localStorage への保存と復元
+- 不正な保存データの破棄
+- 別タブ localStorage 変更への追従
+- Steward ドメインロジックのテスト
+- Steward storage 境界のテスト
+
+* まだ実装されていないこと
+
+MVP 仕様上、意図的に作っていないもの:
+
+- ログイン
+- DB 保存
+- サーバー保存
+- 通知
+- 睡眠シーケンス
+- 支度シーケンス
+- 起床履歴の複数日管理
+- 起床目標時間のカスタマイズ
+- 自動起床完了判定
+- 時間切れ状態
+- 一時停止
+- AI 提案
+
+現在のコードベース上、今後必要になりそうなもの:
+
+- =useSteward= の hook テスト
+- =WakingContent= など UI コンポーネントのテスト
+- 起床表示ロジック =features/waking/wakingContent.ts= の単体テスト
+- localStorage 保存から DB 保存へ移る場合の保存境界設計
+- =isLoaded= を画面でどう扱うかの判断
+- 起床履歴を残す場合のデータモデル
+- 開発用操作をいつ、どのように本番向けの睡眠シーケンスへ置き換えるか
+
+* テスト状況
+
+現在あるテスト:
+
+- =apps/web/features/steward/steward.test.ts=
+  - =resetToSleeping=
+  - =startWaking=
+  - =completeWaking=
+  - =validateStewardState=
+  - =getWakeDurationSeconds=
+
+- =apps/web/features/steward/stewardStorage.test.ts=
+  - window がない場合の初期状態
+  - 保存値がない場合の初期状態
+  - valid state の復元
+  - invalid JSON の初期化
+  - invalid state の初期化
+  - 保存
+  - 削除
+
+未カバー:
+
+- React hook と =useSyncExternalStore= の挙動
+- =storage= イベントによる別タブ同期
+- =WakingContent= の 1 秒更新と表示モード切り替え
+- =AwakeContent= の起床結果表示
+- CSS を含む画面崩れ
+- Next.js build 時の回帰確認以外の E2E テスト
+
+* 新しく参加する人の読み順
+
+最初から全部読もうとすると重いので、次の順番で読む。
+
+1. このドキュメント
+2. =docs/mvp-waking-0714/sebastian-mvp-plan.org=
+3. =docs/mvp-waking-0714/sebastian-mvp-spec.org=
+4. =apps/web/features/steward/steward.ts=
+5. =apps/web/features/steward/stewardStorage.ts=
+6. =apps/web/features/steward/useSteward.ts=
+7. =apps/web/features/waking/wakingContent.ts=
+8. =apps/web/app/page.tsx=
+9. =apps/web/components/SleepingContent.tsx=
+10. =apps/web/components/WakingContent.tsx=
+11. =apps/web/components/AwakeContent.tsx=
+
+読むときの観点:
+
+- 生活状態は boolean ではなく union type で表現されているか
+- 状態遷移は UI ではなく Steward の純粋関数に閉じているか
+- localStorage 由来の値を信用せず検証しているか
+- タイマー値を保存せず、時刻差分から派生しているか
+- UI は現在の lifeState を表示へ変換するだけになっているか
+
+* 開発時の注意点
+
+** 状態を増やすとき
+
+=LifeState= を増やす場合は、少なくとも次を同時に確認する。
+
+- =LifeState= type
+- =LIFE_STATES= set
+- =validateStewardState=
+- 状態遷移関数
+- =StatusHeader= のメッセージ
+- =app/page.tsx= の表示分岐
+- 保存データの互換性
+- テスト
+
+** 保存形式を変えるとき
+
+localStorage の保存形式を変える場合は、古い保存値をどう扱うかを決める。
+
+現在は schema version を持っていないため、大きな形式変更をするなら以下のどちらかを選ぶ必要がある。
+
+- 古い保存値を破棄して初期状態に戻す
+- 保存データに version を追加して migration する
+
+** タイマーを変更するとき
+
+タイマー表示を変更しても、タイマー値そのものを保存する設計にはしない。
+
+保存するのは起床開始時刻と完了時刻であり、経過時間と残り時間は表示時点で計算する。
+
+** UI で状態遷移を直接作らない
+
+画面コンポーネントで =lifeState= を直接書き換えるような設計にしない。
+
+UI は =useSteward= から渡された command を呼び、実際の状態遷移ルールは =steward.ts= に置く。
+
+* 現在のリスクと確認事項
+
+** リスク
+
+- =useSteward= はコメントも多く、初心者には理解負荷が高い。
+- =useSyncExternalStore= を使っているため、普通の React state より説明が必要。
+- =isLoaded= が現時点では UI で活用されていないため、意図が忘れられやすい。
+- localStorage 保存は MVP の暫定対応だが、コードコメントや docs が古くなると DB 移行時に混乱しやすい。
+- hook と UI のテストがないため、表示切り替えや storage event の回帰は手動確認に寄っている。
+
+** 確認したいこと
+
+- =isLoaded= を UI 上で使う必要があるか。
+- =storage= event による別タブ同期は MVP として必要か、それとも過剰設計か。
+- 起床結果は最新 1 回だけでよいか、履歴化する予定が近いか。
+- 開発用の =睡眠状態にする= 操作を本番 UI にどの程度見せるか。
+- 次の機能は睡眠シーケンスか、起床履歴か、UI 改善か。
+
+* 次に着手しやすい候補
+
+** 候補 1: wakingContent の単体テスト追加
+
+理由:
+
+- 表示ロジックが純粋関数に近く、テストしやすい。
+- 起床目標 30 分、残り時間、経過時間、超過判定を安全に固定できる。
+- 初心者が TypeScript の関数テストを練習しやすい。
+
+** 候補 2: useSteward のテスト方針を整理する
+
+理由:
+
+- 現在の実装で最も理解負荷が高い部分である。
+- hook の責務を説明し直すことで、React とブラウザ保存の境界が理解しやすくなる。
+- ただしテスト環境設計が必要なので、候補 1 より難しい。
+
+** 候補 3: PROJECT-MANAGEMENT docs の運用ルールを作る
+
+理由:
+
+- 毎回 Codex に「現状把握」を任せるのではなく、人間が追える現在地を残せる。
+- 実装後に何を更新するかを決めておくと、プロジェクト理解が会話に流れにくくなる。
+
+* 更新ルール
+
+このドキュメントは、実装が進んだら一緒に更新する。
+
+更新タイミング:
+
+- 状態モデルを変えたとき
+- 保存形式を変えたとき
+- 主要な画面構成を変えたとき
+- テスト方針を変えたとき
+- MVP のスコープを変えたとき
+- 次にやることが変わったとき
+
+更新時は、単に「変更した」と書くのではなく、次の 3 点を残す。
+
+- 何が変わったか
+- なぜ変えたか
+- 次に読む人がどこを見ればよいか
